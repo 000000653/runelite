@@ -45,6 +45,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.Objects;
+import java.util.function.Consumer;
 import java.util.function.IntPredicate;
 import java.util.stream.Collectors;
 import javax.inject.Inject;
@@ -74,6 +75,7 @@ import net.runelite.api.widgets.ItemQuantityMode;
 import net.runelite.api.widgets.JavaScriptCallback;
 import net.runelite.api.widgets.Widget;
 import net.runelite.api.widgets.WidgetConfig;
+import net.runelite.api.widgets.WidgetID;
 import net.runelite.api.widgets.WidgetInfo;
 import net.runelite.api.widgets.WidgetSizeMode;
 import net.runelite.api.widgets.WidgetType;
@@ -114,6 +116,11 @@ public class TabInterface
 	private static final String TAB_MENU_KEY = "tagtabs";
 	private static final String TAB_MENU = TAG_SEARCH + TAB_MENU_KEY;
 	private static final String OPEN_TAB_MENU = "View tag tabs";
+	private static final String SHOW_WORN = "Show worn items";
+	private static final String SHOW_SETTINGS = "Show menu";
+	private static final String HIDE_WORN = "Hide worn items";
+	private static final String HIDE_SETTINGS = "Hide menu";
+	private static final String SHOW_TUTORIAL = "Show tutorial";
 	private static final int TAB_HEIGHT = 40;
 	private static final int TAB_WIDTH = 39;
 	private static final int BUTTON_HEIGHT = 20;
@@ -234,6 +241,35 @@ public class TabInterface
 			client.setVarbit(Varbits.CURRENT_BANK_TAB, 0);
 			openTag(config.tab());
 		}
+
+		Widget equipmentButton = client.getWidget(WidgetInfo.BANK_EQUIPMENT_BUTTON);
+		Widget titleBar = client.getWidget(WidgetInfo.BANK_TITLE_BAR);
+		if (equipmentButton == null || titleBar == null || titleBar.getOriginalX() > 0)
+		{
+			// don't keep moving widgets if they have already been moved
+			return;
+		}
+
+		equipmentButton.setOriginalX(6);
+		equipmentButton.setOriginalY(4);
+		equipmentButton.revalidate();
+
+		// the bank item count is 3 widgets
+		for (int child = WidgetInfo.BANK_ITEM_COUNT_TOP.getChildId(); child <= WidgetInfo.BANK_ITEM_COUNT_BOTTOM.getChildId(); child++)
+		{
+			Widget widget = client.getWidget(WidgetID.BANK_GROUP_ID, child);
+			if (widget == null)
+			{
+				return;
+			}
+
+			widget.setOriginalX(widget.getOriginalX() + equipmentButton.getWidth());
+			widget.revalidate();
+		}
+
+		titleBar.setOriginalX(equipmentButton.getWidth() / 2);
+		titleBar.setOriginalWidth(titleBar.getWidth() - equipmentButton.getWidth());
+		titleBar.revalidate();
 	}
 
 	private void handleDeposit(MenuOptionClicked event, Boolean inventory)
@@ -268,7 +304,7 @@ public class TabInterface
 
 		chatboxPanelManager.openTextInput((inventory ? "Inventory " : "Equipment ") + " tags:")
 			.addCharValidator(FILTERED_CHARS)
-			.onDone((newTags) ->
+			.onDone((Consumer<String>) (newTags) ->
 				clientThread.invoke(() ->
 				{
 					final List<String> tags = Text.fromCSV(newTags.toLowerCase());
@@ -290,7 +326,7 @@ public class TabInterface
 			case NewTab.NEW_TAB:
 				chatboxPanelManager.openTextInput("Tag name")
 					.addCharValidator(FILTERED_CHARS)
-					.onDone((tagName) -> clientThread.invoke(() ->
+					.onDone((Consumer<String>) (tagName) -> clientThread.invoke(() ->
 					{
 						if (!Strings.isNullOrEmpty(tagName))
 						{
@@ -375,6 +411,7 @@ public class TabInterface
 				if (tab.equals(activeTab))
 				{
 					bankSearch.reset(true);
+					rememberedSearch = "";
 
 					clientThread.invokeLater(() -> client.runScript(ScriptID.MESSAGE_LAYER_CLOSE, 0, 0));
 				}
@@ -465,29 +502,13 @@ public class TabInterface
 			waitSearchTick = false;
 			rememberedSearch = "";
 
-			// If bank window was just hidden, update last active tab position
-			if (currentTabIndex != config.position())
-			{
-				config.position(currentTabIndex);
-			}
+			saveTab();
+			return;
+		}
 
-			// Do the same for last active tab
-			if (config.rememberTab())
-			{
-				if (activeTab == null && !Strings.isNullOrEmpty(config.tab()))
-				{
-					config.tab("");
-				}
-				else if (activeTab != null && !activeTab.getTag().equals(config.tab()))
-				{
-					config.tab(activeTab.getTag());
-				}
-			}
-			else if (!Strings.isNullOrEmpty(config.tab()))
-			{
-				config.tab("");
-			}
-
+		// Don't continue ticking if equipment menu or bank menu is open
+		if (parent.isSelfHidden())
+		{
 			return;
 		}
 
@@ -544,6 +565,32 @@ public class TabInterface
 
 		updateBounds();
 		scrollTab(0);
+	}
+
+	private void saveTab()
+	{
+		// If bank window was just hidden, update last active tab position
+		if (currentTabIndex != config.position())
+		{
+			config.position(currentTabIndex);
+		}
+
+		// Do the same for last active tab
+		if (config.rememberTab())
+		{
+			if (activeTab == null && !Strings.isNullOrEmpty(config.tab()))
+			{
+				config.tab("");
+			}
+			else if (activeTab != null && !activeTab.getTag().equals(config.tab()))
+			{
+				config.tab(activeTab.getTag());
+			}
+		}
+		else if (!Strings.isNullOrEmpty(config.tab()))
+		{
+			config.tab("");
+		}
 	}
 
 	private void setTabMenuVisible(boolean visible)
@@ -721,6 +768,20 @@ public class TabInterface
 		{
 			handleDeposit(event, event.getWidgetId() == WidgetInfo.BANK_DEPOSIT_INVENTORY.getId());
 		}
+		else if (activeTab != null && ((event.getWidgetId() == WidgetInfo.BANK_EQUIPMENT_BUTTON.getId() && event.getMenuOption().equals(SHOW_WORN))
+			|| (event.getWidgetId() == WidgetInfo.BANK_SETTINGS_BUTTON.getId() && event.getMenuOption().equals(SHOW_SETTINGS))
+			|| (event.getWidgetId() == WidgetInfo.BANK_TUTORIAL_BUTTON.getId() && event.getMenuOption().equals(SHOW_TUTORIAL))))
+		{
+			saveTab();
+			rememberedSearch = TAG_SEARCH + activeTab.getTag();
+		}
+		else if (!Strings.isNullOrEmpty(rememberedSearch) && ((event.getWidgetId() == WidgetInfo.BANK_EQUIPMENT_BUTTON.getId() && event.getMenuOption().equals(HIDE_WORN))
+				|| (event.getWidgetId() == WidgetInfo.BANK_SETTINGS_BUTTON.getId() && event.getMenuOption().equals(HIDE_SETTINGS))))
+		{
+			bankSearch.reset(true);
+			bankSearch.search(InputType.NONE, rememberedSearch, true);
+			rememberedSearch = "";
+		}
 	}
 
 	public void updateTabIfActive(final Collection<String> tags)
@@ -798,7 +859,7 @@ public class TabInterface
 		{
 			return;
 		}
-		
+
 		if (client.getVar(Varbits.BANK_REARRANGE_MODE) == 0)
 		{
 			tabManager.swap(source.getName(), dest.getName());
@@ -908,7 +969,7 @@ public class TabInterface
 	{
 		chatboxPanelManager.openTextInput("Enter new tag name for tag \"" + oldTag + "\":")
 			.addCharValidator(FILTERED_CHARS)
-			.onDone((newTag) -> clientThread.invoke(() ->
+			.onDone((Consumer<String>) (newTag) -> clientThread.invoke(() ->
 			{
 				if (!Strings.isNullOrEmpty(newTag) && !newTag.equalsIgnoreCase(oldTag))
 				{
@@ -981,7 +1042,7 @@ public class TabInterface
 		}
 
 		int proposedIndex = currentTabIndex + direction;
-		int numTabs = tabManager.size() + 1;
+		int numTabs = tabManager.size();
 
 		if (proposedIndex >= numTabs || proposedIndex < 0)
 		{
@@ -1052,7 +1113,7 @@ public class TabInterface
 			incinerator.setOriginalWidth(INCINERATOR_WIDTH);
 			incinerator.setOriginalY(INCINERATOR_HEIGHT);
 
-			Widget child = incinerator.getDynamicChildren()[0];
+			Widget child = incinerator.getChild(0);
 			child.setOriginalHeight(INCINERATOR_HEIGHT);
 			child.setOriginalWidth(INCINERATOR_WIDTH);
 			child.setWidthMode(WidgetSizeMode.ABSOLUTE);
@@ -1075,7 +1136,7 @@ public class TabInterface
 	{
 		int y = bounds.y + MARGIN + BUTTON_HEIGHT;
 
-		if (maxTabs > tabManager.size())
+		if (maxTabs >= tabManager.size())
 		{
 			currentTabIndex = 0;
 		}
@@ -1121,8 +1182,6 @@ public class TabInterface
 				itemX += BANK_ITEM_X_PADDING + BANK_ITEM_WIDTH;
 			}
 		}
-
-		updateWidget(newTab, y);
 
 		boolean hidden = !(tabManager.size() > 0);
 

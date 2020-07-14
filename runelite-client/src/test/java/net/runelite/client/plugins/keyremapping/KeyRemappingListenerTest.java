@@ -30,12 +30,12 @@ import com.google.inject.testing.fieldbinder.BoundFieldModule;
 import java.awt.event.KeyEvent;
 import javax.inject.Inject;
 import net.runelite.api.Client;
-import net.runelite.api.GameState;
 import net.runelite.client.config.ModifierlessKeybind;
 import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.Mock;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -63,8 +63,6 @@ public class KeyRemappingListenerTest
 	public void setUp()
 	{
 		Guice.createInjector(BoundFieldModule.of(this)).injectMembers(this);
-
-		when(client.getGameState()).thenReturn(GameState.LOGGED_IN);
 	}
 
 	@Test
@@ -77,18 +75,34 @@ public class KeyRemappingListenerTest
 		when(keyRemappingConfig.right()).thenReturn(new ModifierlessKeybind(KeyEvent.VK_D, 0));
 
 		when(keyRemappingPlugin.chatboxFocused()).thenReturn(true);
+
 		KeyEvent event = mock(KeyEvent.class);
+		when(event.getKeyChar()).thenReturn('d');
 		when(event.getKeyCode()).thenReturn(KeyEvent.VK_D);
 		when(event.getExtendedKeyCode()).thenReturn(KeyEvent.VK_D); // for keybind matches()
-		keyRemappingListener.keyPressed(event);
-		verify(event).setKeyCode(KeyEvent.VK_RIGHT);
 
+		keyRemappingListener.keyPressed(event);
+
+		verify(event).setKeyCode(KeyEvent.VK_RIGHT);
+		verify(event).setKeyChar(KeyEvent.CHAR_UNDEFINED);
+
+		// now the key listener has remapped d->right, it should consume the key type
+		// event for d
+		event = mock(KeyEvent.class);
+		when(event.getKeyChar()).thenReturn('d');
+		lenient().when(event.getKeyCode()).thenReturn(KeyEvent.VK_UNDEFINED);
+
+		keyRemappingListener.keyTyped(event);
+
+		verify(event).consume();
+
+		lenient().when(keyRemappingPlugin.isTyping()).thenReturn(true); // release handler no longer checks this
 		// with the plugin now in typing mode, previously pressed and remapped keys should still be mapped
 		// on key release regardless
-		when(keyRemappingPlugin.isTyping()).thenReturn(true);
 		event = mock(KeyEvent.class);
 		when(event.getKeyCode()).thenReturn(KeyEvent.VK_D);
 		keyRemappingListener.keyReleased(event);
 		verify(event).setKeyCode(KeyEvent.VK_RIGHT);
+		verify(event).setKeyChar(KeyEvent.CHAR_UNDEFINED);
 	}
 }
